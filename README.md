@@ -9,8 +9,9 @@ EhBASIC 上で動くセルフホスト・アセンブラを設計するための
 ## 特徴
 
 - パス構成: 整形（INCLUDE 展開・EQU 収集）→ 固定長中間レコード化 → シンボル解決（収束まで反復）→ コード生成
-- 出力形式: `const uint8_t NAME[] = {...}` 形式の C ソース、および生バイナリ (.bin)
+- 出力形式: `const uint8_t NAME[] = {...}` 形式の C ソース、生バイナリ (.bin)、アセンブリリスト (.lst)
 - `--check` で既存の C 配列とバイト単位で照合できる（回帰確認用）
+- `--list` でアドレス＋生成バイト＋元のソースを並べたリストを出力できる
 - オリジナルの Macro Assembler 1.42 の符号化規則を再現:
   - 絶対アドレスは符号付き16ビットに収まれば abs.W、そうでなければ abs.L（前方参照は反復で確定）
   - サフィックスなし分岐も最終距離で .S を自動選択
@@ -36,13 +37,38 @@ EMUC68000-PGA2350B 向け設定＝RAM 256KB / ACIA $80E000 の両方）。
 ## 使い方
 
 ```
-python asm68k.py SOURCE.asm [-o OUT.c] [--name NAME] [--bin OUT.bin]
+python asm68k.py SOURCE.asm [-o OUT.c] [--name NAME] [--bin OUT.bin] [--list OUT.lst]
 python asm68k.py SOURCE.asm --check TARGET.c [--array NAME]
 ```
 
 - INCLUDE はソースファイルのあるフォルダから相対で解決されます
+- `-o` 省略時の出力先は、ソースと同名の .c ファイル（カレントフォルダ）です
+- `--name` は C 配列の名前を指定します（省略時はソースのファイル名から生成）
 - `--bin` は C 配列と同一範囲の生バイト列を書きます（隙間は $FF 詰め、ヘッダなし）
+- `--list` はリストを書きます（書式は下記。`--list -` で標準出力）
 - 終了コード: 0 = 正常（--check 時は一致）/ 1 = 照合不一致 / 2 = アセンブルエラー
+
+### リスト出力（--list）
+
+アドレスと生成バイトを、元のソースに並べて出力します。
+
+- ソースは元のテキストそのまま（コメント・タブ・大文字小文字も原文通り）で、
+  コメント行・空行も含め **全行を省略せずに**、元の行番号付きで出力します
+- INCLUDE は出会った位置に展開され、ファイルの切り替わりには
+  `; ===== ファイル名 =====` の区切りが入ります
+- EQU 行には解決した値（`= 00040000` の形式）、DS 行には予約バイト数が表示されます
+- 末尾にシンボル表（名前順、値と EQU / ラベルの区別付き）が付きます
+
+出力例（tests/test1.asm）:
+
+```
+; ===== test1.asm =====
+000000                                1          ORG     $0000
+000000  00 00 00 00                   2          DC.L    $00000000
+000004  00 00 00 00                   3          DC.L    $00000000
+000008  4E F8 00 08                   4          JMP $0008
+                                      5          END
+```
 
 ### 動作確認（tests/ の4本）
 
@@ -56,6 +82,31 @@ python asm68k.py tests/test4.asm -o _check4.c --check tests/test4.c
 4つとも `check OK: identical` と出れば正常です。
 tests/ のソースは EMUC68000-PGA2350B ファームのテストプログラム（test1〜test4）を
 切り出したもので、ゴールデンはファーム内のバイト配列です。
+
+### EhBASIC の再現確認
+
+同梱の EhBASIC ソースから、リファレンスダンプとの完全一致を確認できます。
+
+```
+python asm68k.py third_party/ehbasic/basic68k.asm -o _ehbasic.c --check third_party/ehbasic/EhBASICv354.txt --list _ehbasic.lst
+```
+
+`check OK: identical (16384 bytes)` と出れば一致です。
+`_ehbasic.lst` には EhBASIC 全体（9,423 行）のリストが出力されます。
+（EMUC68000-PGA2350B 向け設定での再現手順は third_party/ehbasic/NOTICE.md を参照）
+
+## ファイル構成
+
+| ファイル | 役割 |
+|---|---|
+| `asm68k.py` | コマンドライン本体（引数処理・各出力の生成） |
+| `pass0.py` | Pass 0: 整形、INCLUDE 展開、EQU 収集 |
+| `pass05.py` | Pass 0.5: 整形済みソースを 32 バイト固定長の中間レコード化 |
+| `pass12.py` | Pass 1/2: シンボル解決（収束反復）とコード生成 |
+| `tapedeck.py` | パス間の受け渡しに使う「テープ」ストリームのシミュレータ |
+| `recon05.py` | Pass 0.5 設計時に使ったオペランド形状の調査ツール |
+| `tests/` | テストプログラム test1〜test4（ソースとゴールデン C 配列） |
+| `third_party/ehbasic/` | 検証用 EhBASIC ソース一式（無改変、ライセンス対象外） |
 
 ## 制限（試作由来）
 

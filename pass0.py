@@ -186,6 +186,13 @@ class Pass0:
         self.deck = deck
         self.out_slot = out_slot
         self.st = Stats()
+        # provenance of each formatted line, in output order:
+        # (source slot, line number in that file, raw line text)
+        self.origins: list[tuple[int, int, str]] = []
+        # every raw line read, in encounter order (INCLUDE expansions
+        # interleaved): [slot, line number, raw text, formatted index
+        # or None when the line produced no formatted line]
+        self.source_map: list[list] = []
 
     def write_out(self, line: str) -> None:
         self.deck.select(self.out_slot)
@@ -211,6 +218,8 @@ class Pass0:
             st.input_lines[slot] += 1
             st.input_bytes[slot] += len(raw) + 1
             where = f"slot{slot}:{lineno}"
+            map_rec = [slot, lineno, raw, None]
+            self.source_map.append(map_rec)
             if raw.strip() == "":
                 st.blank_lines += 1
                 continue
@@ -281,6 +290,8 @@ class Pass0:
             line_out = " ".join(parts)
             if not label:
                 line_out = " " + line_out  # format v2: keep the column rule
+            self.origins.append((slot, lineno, raw))
+            map_rec[3] = len(self.origins) - 1
             self.write_out(line_out)
 
 

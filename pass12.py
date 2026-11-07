@@ -571,28 +571,55 @@ def pass1(mains, ev, values, decisions, errors):
     return rec_addr
 
 
-def pass2(mains, ev, values, decisions, errors):
+def pass2(mains, ev, values, decisions, errors, listing=None):
+    """Encode all records into the image dict.
+
+    When `listing` is a list, one entry per main record is appended:
+    {"line", "addr", "data", "reserve"} -- addr is the location counter
+    at the record (for ORG, the new origin), data the emitted bytes
+    (None for source-only lines: EQU/directives/labels/comments),
+    reserve the byte count for DS records.
+    """
     image = {}
     LC = 0
+    ended = False
     for rec in mains:
         name = rec["opcode"]
+        ent = None
+        if listing is not None:
+            ent = {"line": rec["line"], "addr": None, "data": None,
+                   "reserve": 0}
+            listing.append(ent)
+        if ended:
+            continue
         if name is None or name in ("EQU", "CPU", "SUPMODE"):
             continue
         if name == "END":
-            break
+            ended = True
+            continue
         if name == "ORG":
             v = ev.operand(rec, 1, LC)
             if v is not None:
                 LC = v
+            if ent is not None:
+                ent["addr"] = LC
+                ent["data"] = b""
             continue
         if name == "ALIGN":
             b = ev.operand(rec, 1, LC) or 2
+            start = LC
             while LC % b:
                 image[LC] = 0x00
                 LC += 1
+            if ent is not None:
+                ent["addr"] = start
+                ent["data"] = bytes(LC - start)
             continue
         if name == "DS":
             cnt = ev.operand(rec, 1, LC)
+            if ent is not None:
+                ent["addr"] = LC
+                ent["reserve"] = (cnt or 0) * suffix_bytes(rec["suffix"])
             LC += (cnt or 0) * suffix_bytes(rec["suffix"])
             continue
         ctx = Ctx(ev, 2, errors)
@@ -603,6 +630,9 @@ def pass2(mains, ev, values, decisions, errors):
         except ValueError as e:
             errors.append("pass2: " + str(e))
             data = b"\x00\x00"
+        if ent is not None:
+            ent["addr"] = LC
+            ent["data"] = data
         for i, byte in enumerate(data):
             image[LC + i] = byte
         LC += len(data)
